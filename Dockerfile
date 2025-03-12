@@ -1,4 +1,18 @@
-FROM python:3.10
+# Base image with common dependencies
+FROM debian:latest AS base
+RUN apt update && apt install -y build-essential python3 python3-pip nodejs
+
+# Python execution image
+FROM base AS python
 WORKDIR /app
-COPY . .
-CMD ["python", "/app/code.py"]
+CMD ["sh", "-c", "python3 /app/code.py"]
+
+# C++ execution image
+FROM base AS cpp
+WORKDIR /app
+CMD ["sh", "-c", "g++ /app/code.cpp -o /app/code && /app/code"]
+
+# JavaScript (Node.js) execution image
+FROM base AS javascript
+WORKDIR /app
+CMD ["sh", "-c", "node /app/code.js"]
