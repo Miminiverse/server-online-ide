@@ -1,7 +1,15 @@
+const http = require("http");
 const app = require("./app");
+const { setupWebSocketServer } = require("./services/websocketHandler");
 
-const PORT = process.env.PORT || 8010;
+// Create HTTP server
+const server = http.createServer(app);
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// Set up WebSocket server using the same HTTP server
+const wss = setupWebSocketServer(server);
+
+// Start the server
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

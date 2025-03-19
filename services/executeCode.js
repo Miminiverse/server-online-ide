@@ -2,6 +2,7 @@ const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const pty = require("node-pty");
 
 const dockerImages = {
   python: "code-runner-python",
@@ -9,12 +10,19 @@ const dockerImages = {
   javascript: "code-runner-js",
 };
 
-const executeCodeService = (code, language) => {
+const executeCodeService = (code, language, onData) => {
+  if (language === "c++") {
+    language = "cpp";
+  }
+  console.log("Language:", language);
+
   return new Promise((resolve, reject) => {
     const tempDir = path.join(os.tmpdir(), "code-execution-temp");
     const fileExt = { python: "py", cpp: "cpp", javascript: "js" };
 
-    if (!dockerImages[language]) return reject("Unsupported language");
+    if (!dockerImages[language]) {
+      return reject("Unsupported language");
+    }
 
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
@@ -25,13 +33,33 @@ const executeCodeService = (code, language) => {
       if (error) return reject(error);
 
       const dockerVolumePath = tempDir.replace(/\\/g, "/");
-      const command = `docker run --rm -v "${dockerVolumePath}:/app" ${dockerImages[language]}`;
+      // Note the interactive flag (-i) for Docker.
+      const command = `docker run --rm -i -v "${dockerVolumePath}:/app" ${dockerImages[language]}`;
 
-      exec(command, (error, stdout, stderr) => {
-        fs.unlinkSync(codeFilePath); // Cleanup after execution
-        if (error) return reject(stderr || error);
-        resolve(stdout);
+      // Spawn a pseudo-terminal process for interactive execution.
+      const ptyProcess = pty.spawn(command, [], {
+        name: "xterm-color",
+        cols: 80,
+        rows: 30,
+        cwd: process.env.HOME || process.env.USERPROFILE,
+        env: process.env,
       });
+
+      // When data is received from the process, call the onData callback.
+      ptyProcess.on("data", (data) => {
+        if (onData) {
+          onData(data);
+        }
+      });
+
+      // When the process exits, clean up the temporary code file.
+      ptyProcess.on("exit", (exitCode) => {
+        fs.unlinkSync(codeFilePath);
+        console.log(`Process exited with code ${exitCode}`);
+      });
+
+      // Resolve immediately with the pty process so that the caller can write input.
+      resolve({ ptyProcess });
     });
   });
 };
