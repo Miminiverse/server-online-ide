@@ -45,17 +45,19 @@ const executeCodeService = (code, language, onData) => {
         env: process.env,
       });
 
-      // When data is received from the process, call the onData callback.
       ptyProcess.on("data", (data) => {
+        console.log("Output:", data); // Log all output
         if (onData) {
           onData(data);
         }
       });
 
-      // When the process exits, clean up the temporary code file.
       ptyProcess.on("exit", (exitCode) => {
-        fs.unlinkSync(codeFilePath);
         console.log(`Process exited with code ${exitCode}`);
+        if (exitCode !== 0) {
+          console.error("Process failed with exit code", exitCode);
+        }
+        fs.unlinkSync(codeFilePath);
       });
 
       // Resolve immediately with the pty process so that the caller can write input.
