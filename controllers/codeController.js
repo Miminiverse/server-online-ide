@@ -5,7 +5,7 @@ const executeCode = async (req, res) => {
 
   try {
     const output = await codeService.executeCodeService(code, language);
-    console.log("output", output);
+    console.log("output 2", output);
     
     res.json({ output });
   } catch (error) {
