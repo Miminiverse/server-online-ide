@@ -93,22 +93,47 @@ function processOutput(output, language, ws) {
 
 // Original filter function with slight modifications
 function filterOutput(output) {
-  console.log("Raw lines:", output.split("\n").map(line => JSON.stringify(line)));
+  console.log("Raw output:", output);
+  // Normalize line endings and split
+  const lines = output.replace(/\r\n/g, '\n').split('\n');
   
-  const lines = output.split("\n");
-  const relevantLines = [];
+  // More aggressive and precise filtering
+  const relevantLines = lines.filter(line => {
+    const trimmedLine = line.trim();
+    
+    // Comprehensive noise pattern matching
+    const noisePatterns = [
+      // Exact matches for system messages
+      /^Microsoft Windows \[Version/,
+      /^\(c\) Microsoft Corporation/,
+      /^C:\\.*>/,
+      
+      // Docker and system execution patterns
+      /docker run/,
+      /WINDOWS\\SYSTEM32/,
+      /^0;/,
+      
+      // Terminal and system prefixes
+      /^cmd\.exe/,
+      /^Server running on port/,
+      
+      // Empty or whitespace-only lines
+      /^\s*$/
+    ];
+    
+    // Check if line matches any noise pattern
+    const isNoise = noisePatterns.some(pattern => pattern.test(trimmedLine));
+    
+    // Keep line if it's not noise and has meaningful content
+    return !isNoise && 
+           trimmedLine.length > 0 && 
+           !trimmedLine.startsWith('\\') && 
+           !trimmedLine.includes('TEMP/code-execution-temp');
+  });
   
-  for (let line of lines) {
-    // Filter out system messages and empty lines
-    if (!line.includes("Microsoft") && 
-        !line.includes("cmd.exe") && 
-        !line.includes("docker run") &&
-        line.trim()) {
-      relevantLines.push(line.trim());
-    }
-  }
+  // Join relevant lines, or return null if no relevant lines
+  const result = relevantLines.length > 0 ? relevantLines.join('\n') : null;
   
-  const result = relevantLines.length > 0 ? relevantLines.join("\n") : null;
   console.log("Filtered output:", result);
   return result;
 }
@@ -117,6 +142,8 @@ function filterOutput(output) {
 function handleWebSocketMessage(ws, message, clientId) {
   try {
     const data = JSON.parse(message);
+
+    console.log("Received message:", data);
     if (data.type === "execute") {
       // Execute code
       const { code, language } = data;
@@ -137,6 +164,7 @@ function handleWebSocketMessage(ws, message, clientId) {
     
           // Handle process exit
           ptyProcess.on("exit", (exitCode) => {
+            console.log(`Process exited with code: ${exitCode}`);
             ws.send(
               JSON.stringify({
                 type: "status",
@@ -158,15 +186,22 @@ function handleWebSocketMessage(ws, message, clientId) {
         );
       }
     } else if (data.type === "input") {
-      // Send input to the running process
       const process = activeProcesses.get(clientId);
       if (process) {
-        process.write(data.data + "\n");
+        process.write(data.data + "\n"); // Send input to process
+    
+        // 🔥 Ensure process continues execution
+        setTimeout(() => {
+          process.write("\r"); // Try forcing execution
+        }, 50);
+      } else {
+        ws.send(JSON.stringify({ type: "error", error: "No active process found." }));
       }
     }
   } catch (error) {
     console.error("Error handling message:", error);
     ws.send(JSON.stringify({ type: "error", error: error.toString() }));
+    ws.close(); // Ensure the WebSocket closes on failure
   }
 }
 
@@ -184,13 +219,12 @@ function setupWebSocketServer(server) {
     });
 
     ws.on("close", () => {
-      // Clean up when client disconnects
       const process = activeProcesses.get(clientId);
       if (process) {
-        process.kill();
+        process.kill(); // Kill the running process
         activeProcesses.delete(clientId);
+        console.log(`Process for ${clientId} terminated.`);
       }
-      console.log(`Client disconnected: ${clientId}`);
     });
   });
 

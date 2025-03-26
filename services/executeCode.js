@@ -50,6 +50,7 @@ const executeCodeService = (code, language, onData) => {
   if (language === "c++") {
     language = "cpp";
   }
+
   console.log("Language:", language);
   console.log("code:", code);
 
@@ -64,30 +65,24 @@ const executeCodeService = (code, language, onData) => {
     const codeFilePath = path.join(tempDir, `code.${fileExt[language]}`);
 
     fs.writeFile(codeFilePath, code, { mode: 0o777 }, (error) => {
-      console.log("Python code written to file:", fs.readFileSync(codeFilePath, 'utf8'));
       if (error) return reject(error);
-      let dockerVolumePath;
 
-      if (process.platform === "win32") {
-        dockerVolumePath = formatDockerPath(tempDir);
-      } else if (process.platform === "darwin") {
-        dockerVolumePath = tempDir;
-      } else {
-        dockerVolumePath = tempDir;
-      }
-      let command;
-      if (process.platform === "win32") {
-        command = `docker run --rm -i -v "${dockerVolumePath}:/app" ${dockerImages[language]}`;
-      } else {
-        command = `docker run --rm -i -v "${dockerVolumePath}:/app" ${dockerImages[language]}`;
+      let dockerVolumePath = formatDockerPath(tempDir);
+
+      // Determine execution command based on language
+      let runCommand;
+      if (language === "python") {
+        runCommand = `python /app/code.py`;
+      } else if (language === "cpp") {
+        runCommand = `g++ /app/code.cpp -o /app/code && /app/code`;
+      } else if (language === "javascript") {
+        runCommand = `node /app/code.js`;
       }
 
-      let shell;
-      if (process.platform === "win32") {
-        shell = "cmd.exe";
-      } else {
-        shell = "bash";
-      }
+      // Build the full Docker command
+      const command = `docker run --rm -i -v "${dockerVolumePath}:/app" ${dockerImages[language]} sh -c "${runCommand}"`;
+
+      let shell = process.platform === "win32" ? "cmd.exe" : "bash";
 
       const ptyProcess = pty.spawn(shell, [], {
         name: "xterm-color",
@@ -102,32 +97,23 @@ const executeCodeService = (code, language, onData) => {
       let lastOutput = '';
 
       ptyProcess.on("data", (data) => {
-        // Accumulate output
         lastOutput += data;
-        
-        // Console logs for debugging
         console.log("Raw output:", data);
-        
+
         // Remove ANSI escape sequences
         const cleanData = stripAnsi(data);
-        
-        // Filter out unwanted text
+
+        // Clean up unwanted command-line output
         const filteredData = cleanData
           .replace(/Microsoft Windows \[Version .*\]\r\n/g, "")
           .replace(/\(c\) Microsoft Corporation\. All rights reserved\.\r\n/g, "")
           .replace(/C:\\Users\\.*>\s*/g, "")
-          .replace(/docker run --rm -i -v ".*" code-runner-python\r\n/g, "");
-        
+          .replace(/docker run --rm -i -v ".*" code-runner-.*\r\n/g, "");
+
         if (filteredData.trim()) {
           console.log("Filtered output:", filteredData);
           if (onData) {
             onData(filteredData);
-          }
-          
-          // Check if we've just sent input and now have new output
-          if (lastOutput.includes("Hello,") && !lastOutput.includes("Enter your name:")) {
-            console.log("Found greeting in output:", lastOutput);
-            onData(lastOutput.split("Hello,")[1].trim());
           }
         }
       });

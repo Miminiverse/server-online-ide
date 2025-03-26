@@ -5,7 +5,8 @@ RUN apt update && apt install -y build-essential python3 python3-pip nodejs
 # Python execution image
 FROM base AS python
 WORKDIR /app
-CMD ["sh", "-c", "python3 /app/code.py"]
+RUN ln -s /usr/bin/python3 /usr/bin/python  
+CMD ["sh", "-c", "python /app/code.py"]
 
 # C++ execution image
 FROM base AS cpp
