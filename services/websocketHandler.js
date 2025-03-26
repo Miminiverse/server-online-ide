@@ -3,7 +3,7 @@ const { executeCodeService } = require("./executeCode");
 
 
 // Track active processes - define this at the module level
-const activeProcesses = new Map();
+const processStates  = new Map();
 
 /**
  * Function to detect if output indicates code is waiting for user input
@@ -12,53 +12,30 @@ const activeProcesses = new Map();
  * @returns {boolean} - Whether input is required
  */
 function isWaitingForInput(output, language) {
-  // Remove any trailing cursor characters
   const cleanOutput = output.replace(/[\r\n]*$/, '').trim();
-  
   if (!cleanOutput) return false;
-  
-  // Common patterns that indicate input request across languages
-  const commonPatterns = [
-    /input\s*\(.*\)\s*$/i,         // Python's input() function
-    /raw_input\s*\(.*\)\s*$/i,      // Python 2's raw_input() function
-    /cin\s*>>\s*$/,                // C++ cin
-    /scanf\s*\(.*\)\s*;?\s*$/,     // C/C++ scanf
-    /readline\s*\(\)\s*$/,         // Various languages readline
-    /read\s*\(.*\)\s*$/,           // Various read functions
-    /prompt\s*\(.*\)\s*$/,         // JavaScript prompt
-    /gets\s*\(.*\)\s*$/,           // Ruby gets
-    /fgets\s*\(.*\)\s*$/,          // C fgets
-    /console\.readLine.*\(\)/,     // Java/Kotlin console.readLine
-    /\w+\s*=\s*scanner\.next.*/,   // Java Scanner pattern
+
+  // Common input patterns
+  const inputPatterns = [
+    /enter\s+(a|an|the)\s+.*[:>?]?\s*$/i,
+    /input\s+.*[:>?]?\s*$/i,
+    /:\s*$/,      // Ends with colon
+    />\s*$/,      // Ends with >
+    /\?\s*$/,     // Ends with ?
+    /waiting\s+for\s+input/i,
+    /please\s+provide/i
   ];
-  
-  // Patterns that typically indicate a prompt (ending with : or > or ? without line break)
-  const promptPatterns = [
-    /[:>?]\s*$/,                   // Ends with :, >, or ? followed by optional whitespace
-    /(?:enter|input|type|provide).*[:>?]?\s*$/i, // Words like "enter", "input", etc.
-    /(?:name|value|number|string|text|data).*[:>?]?\s*$/i // Words indicating what to input
-  ];
-  
-  // Language-specific detection
-  if (language === 'python') {
-    // Python commonly uses input() or ends with a prompt character
-    return commonPatterns.some(pattern => pattern.test(cleanOutput)) || 
-           promptPatterns.some(pattern => pattern.test(cleanOutput));
-  } 
-  else if (language === 'cpp') {
-    // C++ commonly uses cin >> or std::cin or ends with a prompt character
-    return /cin|std::cin|scanf|gets|getline/.test(cleanOutput) ||
-           promptPatterns.some(pattern => pattern.test(cleanOutput));
-  }
-  else if (language === 'javascript') {
-    // JavaScript can use prompt() or readline or other custom methods
-    return /prompt|readline|question/.test(cleanOutput) ||
-           promptPatterns.some(pattern => pattern.test(cleanOutput));
-  }
-  
-  // Generic detection for all languages as fallback
-  return commonPatterns.some(pattern => pattern.test(cleanOutput)) || 
-         promptPatterns.some(pattern => pattern.test(cleanOutput));
+
+  // Language-specific patterns
+  const langPatterns = {
+    cpp: [/cin\s*>>/, /scanf\s*\(/, /enter\s+.*:/i],
+    python: [/input\s*\(/, /raw_input\s*\(/],
+    javascript: [/prompt\s*\(/, /readline\s*\(/]
+  };
+
+  // Check both general and language-specific patterns
+  return inputPatterns.some(p => p.test(cleanOutput)) ||
+        (langPatterns[language]?.some(p => p.test(cleanOutput)) || false)
 }
 
 /**
@@ -67,27 +44,22 @@ function isWaitingForInput(output, language) {
  * @param {string} language - The programming language
  * @param {WebSocket} ws - WebSocket connection
  */
-function processOutput(output, language, ws) {
-  console.log("Processing output:", output);
-  
-  // First filter unwanted system messages
+function processOutput(output, language, ws, clientId) {
   const filteredOutput = filterOutput(output);
-  
-  console.log("Filtered to:", filteredOutput);
-  
-  if (filteredOutput) {
-    // Send the filtered output to the client
-    ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
-    
-    // Check if the program is waiting for input
-    if (isWaitingForInput(filteredOutput, language)) {
-      console.log("Input required detected");
-      // Notify the frontend that input is required
-      ws.send(JSON.stringify({ 
-        type: "inputRequired",
-        prompt: filteredOutput
-      }));
-    }
+  if (!filteredOutput) return;
+
+  // Get current process state
+  const processInfo = processStates.get(clientId) || { isRunning: true };
+
+  // Always send output first
+  ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
+
+  // Only check for input if process is still running
+  if (processInfo.isRunning && isWaitingForInput(filteredOutput, language)) {
+    ws.send(JSON.stringify({
+      type: "inputRequired",
+      prompt: filteredOutput
+    }));
   }
 }
 
@@ -145,6 +117,8 @@ function handleWebSocketMessage(ws, message, clientId) {
 
     console.log("Received message:", data);
     if (data.type === "execute") {
+
+      processStates.set(clientId, { isRunning: true });
       // Execute code
       const { code, language } = data;
     
@@ -160,7 +134,7 @@ function handleWebSocketMessage(ws, message, clientId) {
           }
           
           // Store process reference
-          activeProcesses.set(clientId, ptyProcess);
+          processStates.set(clientId, ptyProcess);
     
           // Handle process exit
           ptyProcess.on("exit", (exitCode) => {
@@ -172,7 +146,7 @@ function handleWebSocketMessage(ws, message, clientId) {
                 exitCode,
               })
             );
-            activeProcesses.delete(clientId);
+            processStates.delete(clientId);
           });
         })
         .catch(error => {
@@ -186,7 +160,7 @@ function handleWebSocketMessage(ws, message, clientId) {
         );
       }
     } else if (data.type === "input") {
-      const process = activeProcesses.get(clientId);
+      const process = processStates.get(clientId);
       if (process) {
         process.write(data.data + "\n"); // Send input to process
     
@@ -219,10 +193,10 @@ function setupWebSocketServer(server) {
     });
 
     ws.on("close", () => {
-      const process = activeProcesses.get(clientId);
+      const process = processStates.get(clientId);
       if (process) {
         process.kill(); // Kill the running process
-        activeProcesses.delete(clientId);
+        processStates.delete(clientId);
         console.log(`Process for ${clientId} terminated.`);
       }
     });
