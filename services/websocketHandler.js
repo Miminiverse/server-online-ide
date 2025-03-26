@@ -32,7 +32,36 @@ function isWaitingForInput(output, language) {
 }
 
 function processOutput(output, language, ws, clientId) {
-  // First check for shell prompt indicating process completion
+  // Retrieve the current process state; add initialOutputFiltered flag if missing.
+  let processInfo = processStates.get(clientId) || {
+    isRunning: true,
+    initialOutputFiltered: false,
+  };
+
+  // If we haven't yet seen valid (non-noise) output, filter out Docker/sh noise
+  if (!processInfo.initialOutputFiltered) {
+    // Split the output into lines
+    let lines = output.split("\n");
+    // Remove lines that look like Docker or shell commands
+    let filteredLines = lines.filter((line) => {
+      const trimmed = line.trim();
+      return !(
+        trimmed.match(/docker run/i) ||
+        trimmed.match(/ocker run/i) ||
+        trimmed.match(/^sh -c/i)
+      );
+    });
+    // Check if any line remains that is not just empty noise
+    if (filteredLines.some((line) => line.trim() !== "")) {
+      // We now consider that we've seen real output.
+      processInfo.initialOutputFiltered = true;
+    }
+    // Update output to the filtered lines
+    output = filteredLines.join("\n");
+    processStates.set(clientId, processInfo);
+  }
+
+  // Check for a shell prompt indicating process completion.
   if (output.match(/^(bash-\d+\.\d+\$|\$|>)\s*$/)) {
     ws.send(
       JSON.stringify({
@@ -45,10 +74,10 @@ function processOutput(output, language, ws, clientId) {
     return;
   }
 
+  // Use the existing filterOutput to apply additional noise filtering.
   const filteredOutput = filterOutput(output, process.platform);
   if (!filteredOutput) return;
 
-  const processInfo = processStates.get(clientId) || { isRunning: true };
   ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
 
   if (processInfo.isRunning && isWaitingForInput(filteredOutput, language)) {
@@ -68,14 +97,17 @@ function filterOutput(output, platform = "linux") {
   const relevantLines = lines.filter((line) => {
     const trimmedLine = line.trim();
 
-    // Skip shell prompts and empty lines
-    if (trimmedLine.match(/^(bash-\d+\.\d+\$|\$|>)\s*$/) || !trimmedLine) {
+    // Skip empty lines
+    if (!trimmedLine) return false;
+
+    // Skip any line that starts with a shell prompt (including extra text)
+    // This covers: "bash-3.2$", "$", ">", followed by any spaces or text.
+    if (trimmedLine.match(/^(bash-\d+\.\d+\$|\$|>)(\s+|$)/)) {
       return false;
     }
 
-    // Platform-specific filtering
+    // Noise patterns for Windows and other environments
     const noisePatterns = [
-      // Common patterns
       /^Microsoft Windows \[Version/,
       /^\(c\) Microsoft Corporation/,
       /^C:\\.*>/,
@@ -88,7 +120,7 @@ function filterOutput(output, platform = "linux") {
       /sh -c ".+"/,
     ];
 
-    // macOS-specific patterns to exclude
+    // macOS-specific noise patterns to exclude
     if (platform === "darwin") {
       noisePatterns.push(
         /The default interactive shell is now zsh/,
