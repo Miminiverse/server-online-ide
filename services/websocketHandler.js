@@ -4,25 +4,20 @@ const { executeCodeService } = require("./executeCode");
 // Track active processes
 const processStates = new Map();
 
-/**
- * Function to detect if output indicates code is waiting for user input
- */
 function isWaitingForInput(output, language) {
   const cleanOutput = output.replace(/[\r\n]*$/, "").trim();
   if (!cleanOutput) return false;
 
-  // Common input patterns
   const inputPatterns = [
     /enter\s+(a|an|the)\s+.*[:>?]?\s*$/i,
     /input\s+.*[:>?]?\s*$/i,
-    /:\s*$/, // Ends with colon
-    />\s*$/, // Ends with >
-    /\?\s*$/, // Ends with ?
+    /:\s*$/,
+    />\s*$/,
+    /\?\s*$/,
     /waiting\s+for\s+input/i,
     /please\s+provide/i,
   ];
 
-  // Language-specific patterns
   const langPatterns = {
     cpp: [/cin\s*>>/, /scanf\s*\(/, /enter\s+.*:/i],
     python: [/input\s*\(/, /raw_input\s*\(/],
@@ -36,9 +31,6 @@ function isWaitingForInput(output, language) {
   );
 }
 
-/**
- * Enhanced output filter that detects shell prompts and input requirements
- */
 function processOutput(output, language, ws, clientId) {
   // First check for shell prompt indicating process completion
   if (output.match(/^(bash-\d+\.\d+\$|\$|>)\s*$/)) {
@@ -53,16 +45,12 @@ function processOutput(output, language, ws, clientId) {
     return;
   }
 
-  const filteredOutput = filterOutput(output);
+  const filteredOutput = filterOutput(output, process.platform);
   if (!filteredOutput) return;
 
-  // Get current process state
   const processInfo = processStates.get(clientId) || { isRunning: true };
-
-  // Always send output first
   ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
 
-  // Only check for input if process is still running
   if (processInfo.isRunning && isWaitingForInput(filteredOutput, language)) {
     ws.send(
       JSON.stringify({
@@ -73,7 +61,7 @@ function processOutput(output, language, ws, clientId) {
   }
 }
 
-function filterOutput(output) {
+function filterOutput(output, platform = "linux") {
   console.log("Raw output:", output);
   const lines = output.replace(/\r\n/g, "\n").split("\n");
 
@@ -85,8 +73,9 @@ function filterOutput(output) {
       return false;
     }
 
-    // Comprehensive noise pattern matching
+    // Platform-specific filtering
     const noisePatterns = [
+      // Common patterns
       /^Microsoft Windows \[Version/,
       /^\(c\) Microsoft Corporation/,
       /^C:\\.*>/,
@@ -96,7 +85,18 @@ function filterOutput(output) {
       /^cmd\.exe/,
       /^Server running on port/,
       /TEMP\/code-execution-temp/,
+      /sh -c ".+"/,
     ];
+
+    // macOS-specific patterns to exclude
+    if (platform === "darwin") {
+      noisePatterns.push(
+        /The default interactive shell is now zsh/,
+        /To update your account to use zsh/,
+        /For more details, please visit https:\/\/support\.apple\.com/,
+        /^\[Process completed\]$/
+      );
+    }
 
     return !noisePatterns.some((pattern) => pattern.test(trimmedLine));
   });
@@ -110,7 +110,6 @@ function handleWebSocketMessage(ws, message, clientId) {
     console.log("Received message:", data);
 
     if (data.type === "execute") {
-      // Initialize process state
       processStates.set(clientId, { isRunning: true });
       const { code, language } = data;
 
@@ -122,10 +121,10 @@ function handleWebSocketMessage(ws, message, clientId) {
             throw new Error("Process initialization failed");
           }
 
-          // Store process reference with additional info
           processStates.set(clientId, {
             ptyProcess,
             isRunning: true,
+            platform: process.platform, // Store platform info
           });
 
           ptyProcess.on("exit", (exitCode) => {
