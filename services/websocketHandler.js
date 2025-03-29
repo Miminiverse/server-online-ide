@@ -73,8 +73,9 @@ function processOutput(output, language, ws, clientId) {
     processStates.delete(clientId);
     return;
   }
-
+  console.log("Before filtering:", output);
   const filteredOutput = filterOutput(output, process.platform);
+  console.log("After filtering:", filteredOutput);
   if (!filteredOutput) return;
 
   ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
