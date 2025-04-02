@@ -1,142 +1,158 @@
 const WebSocket = require("ws");
 const { executeCodeService } = require("./executeCode");
 
+// Track active processes
+const processStates = new Map();
 
-// Track active processes - define this at the module level
-const processStates  = new Map();
-
-/**
- * Function to detect if output indicates code is waiting for user input
- * @param {string} output - The program output to analyze
- * @param {string} language - The programming language being executed
- * @returns {boolean} - Whether input is required
- */
 function isWaitingForInput(output, language) {
-  const cleanOutput = output.replace(/[\r\n]*$/, '').trim();
+  const cleanOutput = output.replace(/[\r\n]*$/, "").trim();
   if (!cleanOutput) return false;
 
-  // Common input patterns
   const inputPatterns = [
     /enter\s+(a|an|the)\s+.*[:>?]?\s*$/i,
     /input\s+.*[:>?]?\s*$/i,
-    /:\s*$/,      // Ends with colon
-    />\s*$/,      // Ends with >
-    /\?\s*$/,     // Ends with ?
+    /:\s*$/,
+    />\s*$/,
+    /\?\s*$/,
     /waiting\s+for\s+input/i,
-    /please\s+provide/i
+    /please\s+provide/i,
   ];
 
-  // Language-specific patterns
   const langPatterns = {
     cpp: [/cin\s*>>/, /scanf\s*\(/, /enter\s+.*:/i],
     python: [/input\s*\(/, /raw_input\s*\(/],
-    javascript: [/prompt\s*\(/, /readline\s*\(/]
+    javascript: [/prompt\s*\(/, /readline\s*\(/],
   };
 
-  // Check both general and language-specific patterns
-  return inputPatterns.some(p => p.test(cleanOutput)) ||
-        (langPatterns[language]?.some(p => p.test(cleanOutput)) || false)
+  return (
+    inputPatterns.some((p) => p.test(cleanOutput)) ||
+    langPatterns[language]?.some((p) => p.test(cleanOutput)) ||
+    false
+  );
 }
 
-/**
- * Enhanced output filter that also detects input requirements
- * @param {string} output - Raw output from the process
- * @param {string} language - The programming language
- * @param {WebSocket} ws - WebSocket connection
- */
 function processOutput(output, language, ws, clientId) {
-  const filteredOutput = filterOutput(output);
+  // Retrieve the current process state; add initialOutputFiltered flag if missing.
+  let processInfo = processStates.get(clientId) || {
+    isRunning: true,
+    initialOutputFiltered: false,
+  };
+
+  console.log("processInfo", processInfo);
+
+  // If we haven't yet seen valid (non-noise) output, filter out Docker/sh noise
+  if (!processInfo.initialOutputFiltered) {
+    let lines = output.split("\n");
+    let filteredLines = lines.filter((line) => {
+      const trimmed = line.trim();
+      return !(
+        (
+          trimmed.match(/docker run/i) ||
+          trimmed.match(/ocker run/i) ||
+          trimmed.match(/^sh -c/i) ||
+          trimmed.match(/TEMP\/code-execution-temp/)
+        ) // Added this pattern
+      );
+    });
+    if (filteredLines.some((line) => line.trim() !== "")) {
+      processInfo.initialOutputFiltered = true;
+    }
+    output = filteredLines.join("\n");
+    processStates.set(clientId, processInfo);
+  }
+
+  // Check for a shell prompt indicating process completion.
+  if (output.match(/^(bash-\d+\.\d+\$|\$|>)\s*$/)) {
+    ws.send(
+      JSON.stringify({
+        type: "status",
+        status: "finished",
+        exitCode: 0,
+      })
+    );
+    processStates.delete(clientId);
+    return;
+  }
+  console.log("Before filtering:", output);
+  const filteredOutput = filterOutput(output, process.platform);
+  console.log("After filtering:", filteredOutput);
   if (!filteredOutput) return;
 
-  // Get current process state
-  const processInfo = processStates.get(clientId) || { isRunning: true };
-
-  // Always send output first
   ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
 
-  // Only check for input if process is still running
   if (processInfo.isRunning && isWaitingForInput(filteredOutput, language)) {
-    ws.send(JSON.stringify({
-      type: "inputRequired",
-      prompt: filteredOutput
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "inputRequired",
+        prompt: filteredOutput,
+      })
+    );
   }
 }
 
-// Original filter function with slight modifications
-function filterOutput(output) {
+function filterOutput(output, platform = "darwin") {
   console.log("Raw output:", output);
-  // Normalize line endings and split
-  const lines = output.replace(/\r\n/g, '\n').split('\n');
-  
-  // More aggressive and precise filtering
-  const relevantLines = lines.filter(line => {
+  const lines = output.replace(/\r\n/g, "\n").split("\n");
+
+  const relevantLines = lines.filter((line) => {
     const trimmedLine = line.trim();
-    
-    // Comprehensive noise pattern matching
+
+    if (!trimmedLine) return false;
+
+    if (trimmedLine.match(/^(bash-\d+\.\d+\$|\$|>)(\s+|$)/)) {
+      return false;
+    }
+
     const noisePatterns = [
-      // Exact matches for system messages
       /^Microsoft Windows \[Version/,
       /^\(c\) Microsoft Corporation/,
       /^C:\\.*>/,
-      
-      // Docker and system execution patterns
       /docker run/,
       /WINDOWS\\SYSTEM32/,
       /^0;/,
-      
-      // Terminal and system prefixes
       /^cmd\.exe/,
       /^Server running on port/,
-      
-      // Empty or whitespace-only lines
-      /^\s*$/
+      /TEMP\/code-execution-temp/,
+      /sh -c ".+"/,
     ];
-    
-    // Check if line matches any noise pattern
-    const isNoise = noisePatterns.some(pattern => pattern.test(trimmedLine));
-    
-    // Keep line if it's not noise and has meaningful content
-    return !isNoise && 
-           trimmedLine.length > 0 && 
-           !trimmedLine.startsWith('\\') && 
-           !trimmedLine.includes('TEMP/code-execution-temp');
+
+    if (platform === "darwin") {
+      noisePatterns.push(
+        /The default interactive shell is now zsh/,
+        /To update your account to use zsh/,
+        /For more details, please visit https:\/\/support\.apple\.com/,
+        /^\[Process completed\]$/
+      );
+    }
+
+    return !noisePatterns.some((pattern) => pattern.test(trimmedLine));
   });
-  
-  // Join relevant lines, or return null if no relevant lines
-  const result = relevantLines.length > 0 ? relevantLines.join('\n') : null;
-  
-  console.log("Filtered output:", result);
-  return result;
+
+  return relevantLines.length > 0 ? relevantLines.join("\n") : null;
 }
 
-// Modified WebSocket message handler
 function handleWebSocketMessage(ws, message, clientId) {
   try {
     const data = JSON.parse(message);
 
-    console.log("Received message:", data);
     if (data.type === "execute") {
-
       processStates.set(clientId, { isRunning: true });
-      // Execute code
       const { code, language } = data;
-    
-      try {
-        // Use await or .then() to handle the Promise
-        executeCodeService(code, language, (output) => {
-          processOutput(output, language, ws);
-        })
+
+      executeCodeService(code, language, (output) => {
+        processOutput(output, language, ws, clientId);
+      })
         .then(({ ptyProcess }) => {
-          // Now ptyProcess is available
           if (!ptyProcess) {
             throw new Error("Process initialization failed");
           }
-          
-          // Store process reference
-          processStates.set(clientId, ptyProcess);
-    
-          // Handle process exit
+
+          processStates.set(clientId, {
+            ptyProcess,
+            isRunning: true,
+            platform: process.platform, // Store platform info
+          });
+
           ptyProcess.on("exit", (exitCode) => {
             console.log(`Process exited with code: ${exitCode}`);
             ws.send(
@@ -149,37 +165,26 @@ function handleWebSocketMessage(ws, message, clientId) {
             processStates.delete(clientId);
           });
         })
-        .catch(error => {
-          ws.send(
-            JSON.stringify({ type: "error", error: error.toString() })
-          );
+        .catch((error) => {
+          ws.send(JSON.stringify({ type: "error", error: error.toString() }));
         });
-      } catch (error) {
-        ws.send(
-          JSON.stringify({ type: "error", error: error.toString() })
-        );
-      }
     } else if (data.type === "input") {
-      const process = processStates.get(clientId);
-      if (process) {
-        process.write(data.data + "\n"); // Send input to process
-    
-        // 🔥 Ensure process continues execution
-        setTimeout(() => {
-          process.write("\r"); // Try forcing execution
-        }, 50);
+      const processInfo = processStates.get(clientId);
+      if (processInfo && processInfo.ptyProcess) {
+        processInfo.ptyProcess.write(data.data + "\n");
       } else {
-        ws.send(JSON.stringify({ type: "error", error: "No active process found." }));
+        ws.send(
+          JSON.stringify({ type: "error", error: "No active process found." })
+        );
       }
     }
   } catch (error) {
     console.error("Error handling message:", error);
     ws.send(JSON.stringify({ type: "error", error: error.toString() }));
-    ws.close(); // Ensure the WebSocket closes on failure
+    ws.close();
   }
 }
 
-// Updated WebSocket server setup
 function setupWebSocketServer(server) {
   const wss = new WebSocket.Server({ server });
 
@@ -188,14 +193,13 @@ function setupWebSocketServer(server) {
     console.log(`Client connected: ${clientId}`);
 
     ws.on("message", (message) => {
-      // No longer pass activeProcesses as a parameter since it's accessible at module level
       handleWebSocketMessage(ws, message, clientId);
     });
 
     ws.on("close", () => {
-      const process = processStates.get(clientId);
-      if (process) {
-        process.kill(); // Kill the running process
+      const processInfo = processStates.get(clientId);
+      if (processInfo && processInfo.ptyProcess) {
+        processInfo.ptyProcess.kill();
         processStates.delete(clientId);
         console.log(`Process for ${clientId} terminated.`);
       }
@@ -205,8 +209,8 @@ function setupWebSocketServer(server) {
   return wss;
 }
 
-module.exports = { 
+module.exports = {
   setupWebSocketServer,
-  isWaitingForInput, // Export for testing
-  processOutput
+  isWaitingForInput,
+  processOutput,
 };
