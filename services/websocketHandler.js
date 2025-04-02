@@ -134,7 +134,6 @@ function filterOutput(output, platform = "darwin") {
 function handleWebSocketMessage(ws, message, clientId) {
   try {
     const data = JSON.parse(message);
-    console.log("Received message:", data);
 
     if (data.type === "execute") {
       processStates.set(clientId, { isRunning: true });
