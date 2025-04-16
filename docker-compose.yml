@@ -1,0 +1,50 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8010:8010"
+    environment:
+      NODE_ENV: production
+      PYTHON_EXECUTOR: python-executor
+      JS_EXECUTOR: javascript-executor
+      CPP_EXECUTOR: cpp-executor
+    depends_on:
+      - python-executor
+      - javascript-executor
+      - cpp-executor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./tmp:/tmp/code-execution-temp
+    restart: unless-stopped
+
+  python-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./tmp:/app
+    restart: unless-stopped
+
+  javascript-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.javascript
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./tmp:/app
+    restart: unless-stopped
+
+  cpp-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpp
+    volumes:
+      - ./tmp:/app
+    restart: unless-stopped

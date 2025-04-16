@@ -5,17 +5,14 @@ const os = require("os");
 const pty = require("node-pty");
 
 const dockerImages = {
-  python: "code-runner-python",
-  cpp: "code-runner-cpp",
-  javascript: "code-runner-js",
+  python: "python-executor",
+  cpp: "cpp-executor",
+  javascript: "javascript-executor",
 };
 
 // Function to strip ANSI escape sequences
 const stripAnsi = (str) => {
-  return str.replace(
-    /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g,
-    ""
-  );
+  return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
 };
 
 const getCrossCompatibleTempDir = () => {
@@ -94,7 +91,7 @@ const executeCodeService = (code, language, onData) => {
 
       ptyProcess.write(`${command}\r`);
 
-      let lastOutput = '';
+      let lastOutput = "";
 
       ptyProcess.on("data", (data) => {
         lastOutput += data;
@@ -106,7 +103,10 @@ const executeCodeService = (code, language, onData) => {
         // Clean up unwanted command-line output
         const filteredData = cleanData
           .replace(/Microsoft Windows \[Version .*\]\r\n/g, "")
-          .replace(/\(c\) Microsoft Corporation\. All rights reserved\.\r\n/g, "")
+          .replace(
+            /\(c\) Microsoft Corporation\. All rights reserved\.\r\n/g,
+            ""
+          )
           .replace(/C:\\Users\\.*>\s*/g, "")
           .replace(/docker run --rm -i -v ".*" code-runner-.*\r\n/g, "");
 
