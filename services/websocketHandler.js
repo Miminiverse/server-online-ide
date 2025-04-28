@@ -32,28 +32,23 @@ function isWaitingForInput(output, language) {
 }
 
 function processOutput(output, language, ws, clientId) {
-  // Retrieve the current process state; add initialOutputFiltered flag if missing.
   let processInfo = processStates.get(clientId) || {
     isRunning: true,
     initialOutputFiltered: false,
   };
 
-  // console.log("processInfo", processInfo);
-
-  // If we haven't yet seen valid (non-noise) output, filter out Docker/sh noise
   if (!processInfo.initialOutputFiltered) {
     let lines = output.split("\n");
     let filteredLines = lines.filter((line) => {
       const trimmed = line.trim();
       return !(
-        (
-          trimmed.match(/docker run/i) ||
-          trimmed.match(/ocker run/i) ||
-          trimmed.match(/^sh -c/i) ||
-          trimmed.match(/TEMP\/code-execution-temp/)
-        ) // Added this pattern
+        trimmed.match(/docker run/i) ||
+        trimmed.match(/ocker run/i) ||
+        trimmed.match(/^sh -c/i) ||
+        trimmed.match(/TEMP\/code-execution-temp/)
       );
     });
+
     if (filteredLines.some((line) => line.trim() !== "")) {
       processInfo.initialOutputFiltered = true;
     }
@@ -61,21 +56,7 @@ function processOutput(output, language, ws, clientId) {
     processStates.set(clientId, processInfo);
   }
 
-  // Check for a shell prompt indicating process completion.
-  if (output.match(/^(bash-\d+\.\d+\$|\$|>)\s*$/)) {
-    ws.send(
-      JSON.stringify({
-        type: "status",
-        status: "finished",
-        exitCode: 0,
-      })
-    );
-    processStates.delete(clientId);
-    return;
-  }
-  // console.log("Before filtering:", output);
   const filteredOutput = filterOutput(output, process.platform);
-  // console.log("After filtering:", filteredOutput);
   if (!filteredOutput) return;
 
   ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
@@ -91,17 +72,11 @@ function processOutput(output, language, ws, clientId) {
 }
 
 function filterOutput(output, platform = "darwin") {
-  // console.log("Raw output:", output);
   const lines = output.replace(/\r\n/g, "\n").split("\n");
 
   const relevantLines = lines.filter((line) => {
     const trimmedLine = line.trim();
-
     if (!trimmedLine) return false;
-
-    if (trimmedLine.match(/^(bash-\d+\.\d+\$|\$|>)(\s+|$)/)) {
-      return false;
-    }
 
     const noisePatterns = [
       /^Microsoft Windows \[Version/,
@@ -136,8 +111,8 @@ function handleWebSocketMessage(ws, message, clientId) {
     const data = JSON.parse(message);
 
     if (data.type === "execute") {
-      processStates.set(clientId, { isRunning: true });
       const { code, language } = data;
+      processStates.set(clientId, { isRunning: true });
 
       executeCodeService(code, language, (output) => {
         processOutput(output, language, ws, clientId);
@@ -150,7 +125,7 @@ function handleWebSocketMessage(ws, message, clientId) {
           processStates.set(clientId, {
             ptyProcess,
             isRunning: true,
-            platform: process.platform, // Store platform info
+            platform: process.platform,
           });
 
           ptyProcess.on("exit", (exitCode) => {

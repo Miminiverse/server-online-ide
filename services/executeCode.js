@@ -1,99 +1,93 @@
+const { spawn } = require("node-pty"); // or import pty if you use node-pty
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
-const pty = require("node-pty");
 
-const dockerImages = {
-  python: "python-executor",
-  cpp: "cpp-executor",
-  javascript: "javascript-executor",
-};
-
-// Function to strip ANSI escape sequences
-const stripAnsi = (str) => {
-  return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
-};
-
-const getTempDir = () => {
-  const tempDir = path.join("/tmp", "code-execution-temp");
-
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true, mode: 0o777 });
-  }
-
-  return tempDir;
-};
-
-const executeCodeService = (code, language, onData) => {
-  if (language === "c++") {
-    language = "cpp";
-  }
-
-  console.log("Language:", language);
-  console.log("code:", code);
-
+function executeCodeService(code, language, onData) {
   return new Promise((resolve, reject) => {
-    const tempDir = getTempDir();
-    const fileExt = { python: "py", cpp: "cpp", javascript: "js" };
-
-    if (!dockerImages[language]) {
-      return reject("Unsupported language");
+    const tempDir = "/tmp/code-execution-temp";
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    const codeFilePath = path.join(tempDir, `code.${fileExt[language]}`);
+    let fileName;
+    let command;
+    let args;
 
-    fs.writeFile(codeFilePath, code, { mode: 0o777 }, (error) => {
-      if (error) return reject(error);
+    switch (language) {
+      case "python":
+        fileName = "code.py";
+        fs.writeFileSync(path.join(tempDir, fileName), code);
+        command = "docker";
+        args = [
+          "run",
+          "--rm",
+          "-i",
+          "-v",
+          `${tempDir}:/app`,
+          "python-executor",
+          "sh",
+          "-c",
+          "python /app/code.py",
+        ];
+        break;
 
-      // Determine execution command based on language
-      let runCommand;
-      if (language === "python") {
-        runCommand = `python /app/code.py`;
-      } else if (language === "cpp") {
-        runCommand = `g++ /app/code.cpp -o /app/code && /app/code`;
-      } else if (language === "javascript") {
-        runCommand = `node /app/code.js`;
-      }
+      case "cpp":
+        fileName = "code.cpp";
+        fs.writeFileSync(path.join(tempDir, fileName), code);
+        command = "docker";
+        args = [
+          "run",
+          "--rm",
+          "-i",
+          "-v",
+          `${tempDir}:/app`,
+          "cpp-executor",
+          "sh",
+          "-c",
+          "g++ /app/code.cpp -o /app/code.out && /app/code.out",
+        ];
+        break;
 
-      // Build the full Docker command
-      const command = `docker run --rm -i -v "${tempDir}:/app" ${dockerImages[language]} sh -c "${runCommand}"`;
+      case "javascript":
+        fileName = "code.js";
+        fs.writeFileSync(path.join(tempDir, fileName), code);
+        command = "docker";
+        args = [
+          "run",
+          "--rm",
+          "-i",
+          "-v",
+          `${tempDir}:/app`,
+          "javascript-executor",
+          "sh",
+          "-c",
+          "node /app/code.js",
+        ];
+        break;
 
-      const ptyProcess = pty.spawn("bash", [], {
-        name: "xterm-color",
-        cols: 80,
-        rows: 30,
-        cwd: os.homedir(),
-        env: process.env,
-      });
+      default:
+        return reject(new Error("Unsupported language"));
+    }
 
-      ptyProcess.write(`${command}\r`);
-
-      let lastOutput = "";
-
-      ptyProcess.on("data", (data) => {
-        lastOutput += data;
-        // Remove ANSI escape sequences
-        const cleanData = stripAnsi(data);
-
-        if (cleanData.trim()) {
-          console.log("Filtered output:", cleanData);
-          if (onData) {
-            onData(cleanData);
-          }
-        }
-      });
-
-      ptyProcess.on("exit", (exitCode) => {
-        console.log(`Process exited with code ${exitCode}`);
-        if (exitCode !== 0) {
-          console.error("Process failed with exit code", exitCode);
-        }
-      });
-
-      resolve({ ptyProcess });
+    const ptyProcess = spawn(command, args, {
+      name: "xterm-color",
+      cols: 80,
+      rows: 30,
+      cwd: process.env.HOME,
+      env: process.env,
     });
+
+    ptyProcess.on("data", (data) => {
+      if (onData) onData(data);
+    });
+
+    ptyProcess.on("exit", (code) => {
+      console.log("Docker process exited with code:", code);
+    });
+
+    resolve({ ptyProcess });
   });
-};
+}
 
 module.exports = {
   executeCodeService,
