@@ -1,10 +1,28 @@
-const { spawn } = require("node-pty"); // or import pty if you use node-pty
+const { spawn } = require("node-pty");
 const fs = require("fs");
 const path = require("path");
+
+function clearDirectory(dirPath) {
+  if (fs.existsSync(dirPath)) {
+    fs.readdirSync(dirPath).forEach((file) => {
+      const curPath = path.join(dirPath, file);
+      if (fs.lstatSync(curPath).isDirectory()) {
+        clearDirectory(curPath);
+      } else {
+        fs.unlinkSync(curPath);
+      }
+    });
+  }
+}
 
 function executeCodeService(code, language, onData) {
   return new Promise((resolve, reject) => {
     const tempDir = "/tmp/code-execution-temp";
+
+    // 🔥 Only clear files inside the temp folder
+    clearDirectory(tempDir);
+
+    // 🔥 Ensure folder exists
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -78,6 +96,7 @@ function executeCodeService(code, language, onData) {
     });
 
     ptyProcess.on("data", (data) => {
+      console.log("data", data);
       if (onData) onData(data);
     });
 

@@ -18,8 +18,8 @@ services:
       - cpp-executor
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./tmp:/tmp/code-execution-temp
-    user: "0:0" # Run as root temporarily to bypass permission issues
+      - /tmp/code-execution-temp:/tmp/code-execution-temp # <-- use real /tmp now
+    user: "0:0"
     restart: unless-stopped
 
   python-executor:
@@ -29,7 +29,7 @@ services:
     stdin_open: true
     tty: true
     volumes:
-      - ./tmp:/app
+      - /tmp/code-execution-temp:/app # <-- fix this too
     restart: unless-stopped
 
   javascript-executor:
@@ -39,7 +39,7 @@ services:
     stdin_open: true
     tty: true
     volumes:
-      - ./tmp:/app
+      - /tmp/code-execution-temp:/app # <-- fix this too
     restart: unless-stopped
 
   cpp-executor:
@@ -47,5 +47,5 @@ services:
       context: .
       dockerfile: Dockerfile.cpp
     volumes:
-      - ./tmp:/app
+      - /tmp/code-execution-temp:/app # <-- fix this too
     restart: unless-stopped
