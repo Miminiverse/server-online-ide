@@ -38,7 +38,7 @@ function processOutput(output, language, ws, clientId) {
     initialOutputFiltered: false,
   };
 
-  console.log("processInfo", processInfo);
+  // console.log("processInfo", processInfo);
 
   // If we haven't yet seen valid (non-noise) output, filter out Docker/sh noise
   if (!processInfo.initialOutputFiltered) {
@@ -73,9 +73,9 @@ function processOutput(output, language, ws, clientId) {
     processStates.delete(clientId);
     return;
   }
-  console.log("Before filtering:", output);
+  // console.log("Before filtering:", output);
   const filteredOutput = filterOutput(output, process.platform);
-  console.log("After filtering:", filteredOutput);
+  // console.log("After filtering:", filteredOutput);
   if (!filteredOutput) return;
 
   ws.send(JSON.stringify({ type: "output", data: filteredOutput }));
@@ -91,7 +91,7 @@ function processOutput(output, language, ws, clientId) {
 }
 
 function filterOutput(output, platform = "darwin") {
-  console.log("Raw output:", output);
+  // console.log("Raw output:", output);
   const lines = output.replace(/\r\n/g, "\n").split("\n");
 
   const relevantLines = lines.filter((line) => {

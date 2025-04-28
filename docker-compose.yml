@@ -19,6 +19,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./tmp:/tmp/code-execution-temp
+    user: "0:0" # Run as root temporarily to bypass permission issues
     restart: unless-stopped
 
   python-executor:
