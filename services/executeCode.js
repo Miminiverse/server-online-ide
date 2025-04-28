@@ -16,6 +16,10 @@ function clearDirectory(dirPath) {
 }
 
 function executeCodeService(code, language, onData) {
+  console.log("language", language);
+  if (language == "c++") {
+    language = "cpp";
+  }
   return new Promise((resolve, reject) => {
     const tempDir = "/tmp/code-execution-temp";
 
