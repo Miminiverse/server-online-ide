@@ -1,0 +1,20 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+        python3-pip \
+        build-essential \
+        nodejs \
+        npm \
+        g++ \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m executor && \
+    mkdir -p /executions && \
+    chown -R executor:executor /executions
+
+WORKDIR /executions
+USER executor

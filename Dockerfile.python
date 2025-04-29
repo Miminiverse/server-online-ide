@@ -1,0 +1,10 @@
+FROM base
+
+USER root
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir numpy pandas matplotlib && \
+    chown -R executor:executor /opt/venv
+USER executor
+
+ENV PATH="/opt/venv/bin:$PATH"
+CMD ["python", "-c", "import sys; exec(sys.stdin.read())"]
